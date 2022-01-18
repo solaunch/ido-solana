@@ -55,14 +55,16 @@ pub mod ido_solana {
         }
         schedule.start_time = pool.claim_time;
         schedule.bump = bump;
+        schedule.pool = pool.key();
+        schedule.bidder = ctx.accounts.bidder.key();
 
-        // transfer tokens
+        //transfer tokens
         let cpi_accounts = Transfer {
             from: ctx.accounts.deposit_account.to_account_info(),
             to: ctx.accounts.quote_vault.to_account_info(),
-            authority: ctx.accounts.authority.to_account_info(),
+            authority: ctx.accounts.bidder.to_account_info(),
         };
-        let cpi_program = ctx.accounts.quote_token_program.clone();
+        let cpi_program = ctx.accounts.token_program.clone();
 
         token::transfer(CpiContext::new(cpi_program, cpi_accounts), pool.pool_every_quote_amount)?;
         Ok(())
@@ -78,15 +80,22 @@ pub mod ido_solana {
         if amount == 0 {
             final_amount = claimable_amount;
         }
+        let seeds = &[
+            pool.to_account_info().key.as_ref(),
+            &[pool.bump],
+        ];
+
+        let signer = &[&seeds[..]];
         // transfer tokens
         let cpi_accounts = Transfer {
             from: ctx.accounts.base_vault.to_account_info(),
             to: ctx.accounts.claim_account.to_account_info(),
-            authority: ctx.accounts.authority.to_account_info(),
+            authority: ctx.accounts.vault_signer.to_account_info(),
         };
-        let cpi_program = ctx.accounts.base_token_program.clone();
+        let cpi_program = ctx.accounts.token_program.clone();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts).with_signer(signer);
 
-        token::transfer(CpiContext::new(cpi_program, cpi_accounts), final_amount)?;
+        token::transfer(cpi_ctx, final_amount)?;
         schedule.amount_claimed = schedule.amount_claimed.checked_add(final_amount).unwrap();
         Ok(())
     }
@@ -103,6 +112,7 @@ fn compute_claimable_amount(pool: &mut Pool, schedule: &mut VestingSchedule, cur
     let vested_slice_periods = time_from_start.checked_div(pool.vest_slice_period_seconds).unwrap();
     let vested_seconds = vested_slice_periods.checked_mul(pool.vest_slice_period_seconds).unwrap();
     let claimable_amount = schedule.amount.checked_mul(vested_seconds).unwrap().checked_div(pool.vest_duration).unwrap().checked_add(schedule.amount_init_vested).unwrap();
+    msg!("{},{}",claimable_amount, vested_slice_periods);
     return claimable_amount.checked_sub(schedule.amount_claimed).unwrap();
 }
 
@@ -146,7 +156,6 @@ pub struct Create<'info> {
 
     // permissions related
     pub authority: Signer<'info>,
-    // init related
     pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
@@ -158,7 +167,7 @@ pub struct Bid<'info> {
         init, 
         seeds = [
             pool.to_account_info().key.as_ref(), 
-            authority.to_account_info().key.as_ref()
+            bidder.to_account_info().key.as_ref()
         ],
         bump = bump,
         payer = payer,
@@ -170,14 +179,14 @@ pub struct Bid<'info> {
     pub quote_vault: Account<'info, TokenAccount>,
     #[account(
         mut, 
-        constraint = &deposit_account.owner == authority.key, 
+        constraint = &deposit_account.owner == bidder.key, 
         constraint = &deposit_account.mint == &pool.quote_mint
     )]
     pub deposit_account: Account<'info, TokenAccount>,
-    #[account(constraint = quote_token_program.key == &token::ID)]
-    pub quote_token_program: AccountInfo<'info>,
-    pub authority: Signer<'info>,
-    // init related
+    #[account(constraint = token_program.key == &token::ID)]
+    pub token_program: AccountInfo<'info>,
+    // permissions related
+    pub bidder: Signer<'info>,
     pub payer: Signer<'info>,     
     pub system_program: Program<'info, System>,
 }
@@ -189,26 +198,28 @@ pub struct Claim<'info> {
         mut, 
         seeds = [
             vesting_schedule.pool.as_ref(), 
-            vesting_schedule.authority.as_ref()
+            vesting_schedule.bidder.as_ref()
         ],
         bump = vesting_schedule.bump,
         has_one = pool,
-        has_one = authority,
+        has_one = bidder,
     )]
     pub vesting_schedule: Account<'info, VestingSchedule>,
     #[account(mut)]
     pub pool: Account<'info, Pool>,
+    #[account(seeds = [pool.to_account_info().key.as_ref()], bump = pool.bump)]
+    pub vault_signer: AccountInfo<'info>,
     #[account(mut, constraint = base_vault.to_account_info().key == &pool.base_vault)]
     pub base_vault: Account<'info, TokenAccount>,
-    #[account(constraint = base_token_program.key == &token::ID)]
-    pub base_token_program: AccountInfo<'info>,
+    #[account(constraint = token_program.key == &token::ID)]
+    pub token_program: AccountInfo<'info>,
     #[account(
         mut, 
-        constraint = &claim_account.owner == authority.key, 
+        constraint = &claim_account.owner == bidder.key, 
         constraint = &claim_account.mint == &pool.base_mint
     )]
     pub claim_account: Account<'info, TokenAccount>,
-    pub authority: Signer<'info>,
+    pub bidder: Signer<'info>,
     pub clock: Sysvar<'info, Clock>,
 }
 
@@ -236,7 +247,7 @@ pub struct Pool {
 #[account]
 #[derive(Default)]
 pub struct VestingSchedule {
-    pub authority: Pubkey,
+    pub bidder: Pubkey,
     pub pool: Pubkey,
     pub start_time: u64,
     pub amount: u64,
@@ -253,4 +264,6 @@ pub enum ErrorCode {
     CapFull,
     #[msg("Cannot claim tokens, not enough vested tokens")]
     NotEnoughVestedToken,
+    #[msg("Check point")]
+    CheckPoint,
 }

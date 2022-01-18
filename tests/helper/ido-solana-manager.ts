@@ -22,6 +22,7 @@ export class IdoSolanaManager {
   vest_slice_period_seconds: number;
   vest_rate_init_vested: number;
   total_shares: number;
+  vault_signer: anchor.web3.PublicKey;
   bump: number;
 
   static async create(
@@ -52,6 +53,7 @@ export class IdoSolanaManager {
     );
     manager.bump = bump;
     manager.pool = poolKeypair.publicKey;
+    manager.vault_signer = vault_signer;
 
     manager.base_vault = await serumCmn.createTokenAccount(
       manager.program.provider,
@@ -94,10 +96,13 @@ export class IdoSolanaManager {
     return manager;
   }
 
-  async bid(user: anchor.web3.Keypair): Promise<number> {
+  async bid(
+    bidder: anchor.web3.Keypair,
+    bidderQuoteWallet: anchor.web3.PublicKey
+  ) {
     const [vestingSchedule, scheduleBump] =
       await anchor.web3.PublicKey.findProgramAddress(
-        [this.pool.toBuffer(), user.publicKey.toBuffer()],
+        [this.pool.toBuffer(), bidder.publicKey.toBuffer()],
         this.program.programId
       );
     const tx = await this.program.rpc.bid(scheduleBump, {
@@ -105,43 +110,58 @@ export class IdoSolanaManager {
         vestingSchedule: vestingSchedule,
         pool: this.pool,
         quoteVault: this.quote_vault,
-        depositAccount: user,
-        quoteTokenProgram: TOKEN_PROGRAM_ID,
-        authority: this.authority,
-        payer: this.authority.publicKey,
+        depositAccount: bidderQuoteWallet,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        bidder: bidder.publicKey,
+        payer: this.program.provider.wallet.publicKey,
         systemProgram: anchor.web3.SystemProgram.programId,
       },
-      signers: [this.authority],
+      signers: [bidder],
     });
     await this.program.provider.connection.confirmTransaction(tx);
     const tr = await this.program.provider.connection.getTransaction(tx, {
       commitment: "confirmed",
     });
-    return tr.slot;
+    return await this.program.account.vestingSchedule.fetch(vestingSchedule);
   }
 
-  async claim(user: anchor.web3.Keypair, amount: anchor.BN) {
+  async getVestingScheduleKey(
+    user: anchor.web3.Keypair
+  ): Promise<anchor.web3.PublicKey> {
+    const [vestingSchedule] = await anchor.web3.PublicKey.findProgramAddress(
+      [this.pool.toBuffer(), user.publicKey.toBuffer()],
+      this.program.programId
+    );
+    return vestingSchedule;
+  }
+
+  async claim(
+    bidder: anchor.web3.Keypair,
+    amount: anchor.BN,
+    bidderBaseWallet: anchor.web3.PublicKey
+  ) {
     const poolAccount = await this.program.account.pool.fetch(this.pool);
     const [vestingSchedule, _] = await anchor.web3.PublicKey.findProgramAddress(
-      [this.pool.toBuffer(), user.publicKey.toBuffer()],
+      [this.pool.toBuffer(), bidder.publicKey.toBuffer()],
       this.program.programId
     );
     const tx = await this.program.rpc.claim(amount, {
       accounts: {
         vestingSchedule: vestingSchedule,
         pool: this.pool,
+        vaultSigner: this.vault_signer,
         baseVault: poolAccount.baseVault,
-        baseTokenProgram: TOKEN_PROGRAM_ID,
-        claimAccount: user.publicKey,
-        authority: this.authority,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        claimAccount: bidderBaseWallet,
+        bidder: bidder.publicKey,
         clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
       },
-      signers: [this.authority],
+      signers: [bidder],
     });
     await this.program.provider.connection.confirmTransaction(tx);
-    const tr = await this.program.provider.connection.getTransaction(tx, {
+    await this.program.provider.connection.getTransaction(tx, {
       commitment: "confirmed",
     });
-    return tr.slot;
+    return await this.program.account.vestingSchedule.fetch(vestingSchedule);
   }
 }
