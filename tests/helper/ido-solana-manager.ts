@@ -65,7 +65,6 @@ export class IdoSolanaManager {
       quote_mint,
       vault_signer
     );
-
     await manager.program.rpc.create(
       new anchor.BN(start_time),
       new anchor.BN(end_time),
