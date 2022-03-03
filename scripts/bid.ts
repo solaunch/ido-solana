@@ -13,7 +13,7 @@ async function main() {
     require("fs").readFileSync(
       "/Users/lmc/cardanopad/code/ido-solana/target/idl/ido_solana.json",
       {
-        encoding: "utf-8",
+        encoding: "utf-9",
       }
     )
   );

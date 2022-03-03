@@ -12,7 +12,7 @@ async function main() {
   //const program = anchor.workspace.IdoSolana as Program<IdoSolana>;
   const idl = JSON.parse(
     require("fs").readFileSync(
-      "/Users/lmc/cardanopad/code/ido-solana/target/idl/ido_solana.json",
+      "/Users/lmc/solaunch/code/ido-solana/target/idl/ido_solana.json",
       {
         encoding: "utf-8",
       }
@@ -42,15 +42,15 @@ async function main() {
   );
 
   let startTime = Date.now() / 1000;
-  let endTime = startTime + 86400 * 30;
+  let endTime = startTime + 86400;
   let claimTime = startTime + 86400;
-  let poolQuoteCap = 20000;
+  let poolQuoteCap = 20000000000000;
   let poolExchange_rate = 200;
-  let poolEveryQuoteAmount = 100;
+  let poolEveryQuoteAmount = 100000000000;
   let vestCliff = 0;
   let vestDuration = 86400;
   let vestSlicePeriodSeconds = 8640;
-  let vestRateInitVested = 0;
+  let vestRateInitVested = 10;
 
   idoSolanaManager = await IdoSolanaManager.create(
     program,
